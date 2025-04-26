@@ -1,4 +1,9 @@
+basePath: /api
+host: localhost:8080
 info:
   contact: {}
+  description: Это тестовый API
+  title: TestTaskAPI
+  version: "1.0"
 paths: {}
 swagger: "2.0"

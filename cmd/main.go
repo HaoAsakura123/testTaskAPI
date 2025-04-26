@@ -11,7 +11,7 @@ import (
 	"testTaskAPI/internal/contextkeys"
 
 	"github.com/joho/godotenv"
-	"github.com/swaggo/http-swagger" 
+	httpSwagger "github.com/swaggo/http-swagger" 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -20,8 +20,16 @@ import (
 	_ "testTaskAPI/docs"
 )
 
+
+// @title TestTaskAPI
+// @version 1.0
+// @description Это тестовый API / и, увы, неудачный
+// @host localhost:8080
+// @BasePath /api
+
 func main() {
-	if err := godotenv.Load(); err != nil {
+
+	if err := godotenv.Load("cmd/.env"); err != nil {
 		log.Println("DEBUG: No .env file found, using system environment variables")
 	}
 	dbHost := os.Getenv("DB_HOST")
@@ -85,7 +93,7 @@ func dbMiddleware(db *sqlx.DB) func(http.Handler) http.Handler {
 
 func runMigrations(connStr string) error {
 	m, err := migrate.New(
-		"file://../migrations", // Измененный путь
+		"file://migrations", // Измененный путь
 		connStr,
 	)
 	if err != nil {

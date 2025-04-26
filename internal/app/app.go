@@ -15,9 +15,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+
+	_ "testTaskAPI/docs"
 	_ "github.com/lib/pq"
 )
-
+// Info represents person information
+// @Description Person information with details from external APIs
 type Info struct {
 	HumanID     string    `json:"id" db:"human_id"`
 	Name        string    `json:"name" db:"name"`
@@ -28,19 +31,16 @@ type Info struct {
 	Nationalize string    `json:"country" db:"country"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
-// @Summary Добавить информацию о человеке
-// @Description Создаёт новую запись с данными (имя, возраст, пол и т.д.)
-// @Tags People
+
+// @Summary Add user
+// @Description Adds a new user to the database
+// @Tags users
 // @Accept json
 // @Produce json
-// @Param input body Info true "Данные для добавления"
-// @Success 200 {object} map[string]interface{} "Успешный ответ"
-// @Failure 400 {string} string "Неверный запрос"
-// @Failure 500 {string} string "Ошибка сервера"
+// @Param user body model.User true "User data"
+// @Success 200 {object} model.User
+// @Failure 400 {object} model.ErrorResponse
 // @Router /add [post]
-// @Router /search [get]
-// @Router /delete [delete]
-// @Router /update [patch]
 
 func AddHandle(w http.ResponseWriter, r *http.Request) {
 
@@ -114,6 +114,23 @@ func saveToDB(db *sqlx.DB, info Info) error {
 	_, err := db.NamedExec(query, info)
 	return err
 }
+
+// SearchHandle ищет пользователей
+// @Summary Поиск пользователей
+// @Description Получение списка пользователей по заданным фильтрам
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param name query string false "Имя пользователя для поиска"
+// @Param age query int false "Возраст пользователя для поиска"
+// @Param country query string false "Страна пользователя для поиска"
+// @Param page query int false "Номер страницы"
+// @Param limit query int false "Количество записей на страницу"
+// @Param sort_by query string false "Поле для сортировки (например, created_at)"
+// @Param sort_order query string false "Порядок сортировки (ASC или DESC)"
+// @Success 200 {object} map[string]interface{} "Результат поиска с пагинацией"
+// @Failure 500 {string} string "Внутренняя ошибка сервера"
+// @Router /search [get]
 
 func SearchHandle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -251,6 +268,17 @@ func getFilters(queryParams url.Values) map[string]string {
 	return filters
 }
 
+// DeleteHandle удаляет пользователя
+// @Summary Удалить пользователя
+// @Description Удаляет пользователя по его ID
+// @Tags users
+// @Param id path string true "ID пользователя для удаления"
+// @Success 204 "Пользователь успешно удалён"
+// @Failure 400 {string} string "Неверный запрос"
+// @Failure 404 {string} string "Пользователь не найден"
+// @Failure 500 {string} string "Внутренняя ошибка сервера"
+// @Router /delete/{id} [delete]
+
 func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -298,6 +326,20 @@ func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 
 }
+
+// UpdateHandle обновляет данные пользователя
+// @Summary Обновить пользователя
+// @Description Частичное обновление данных пользователя по ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path string true "ID пользователя для обновления"
+// @Param input body map[string]interface{} true "Данные для обновления"
+// @Success 200 {object} map[string]interface{} "Успешный ответ с обновлёнными данными"
+// @Failure 400 {string} string "Ошибка в запросе"
+// @Failure 404 {string} string "Пользователь не найден"
+// @Failure 500 {string} string "Внутренняя ошибка сервера"
+// @Router /update/{id} [patch]
 
 func UpdateHandle(w http.ResponseWriter, r *http.Request) {
 	// 1. Проверяем метод PATCH

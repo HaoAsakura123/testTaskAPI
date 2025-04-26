@@ -12,7 +12,7 @@ import (
 
 func CreateDatabaseIfNotExists(dbUser, dbPassword, dbName string) error {
 	// Загрузка .env (путь должен быть правильным)
-	if err := godotenv.Load("../cmd/.env"); err != nil {
+	if err := godotenv.Load("cmd/.env"); err != nil {
 		log.Println("DEBUG: No .env file found, using system environment variables")
 	}
 	DB_SSLMODE := os.Getenv("DB_SSLMODE")
