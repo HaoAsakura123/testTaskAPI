@@ -1,8 +1,11 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -10,21 +13,23 @@ import (
 	"strconv"
 	"strings"
 	"testTaskAPI/internal/contextkeys"
-	"testTaskAPI/internal/getAPI"
+	"testTaskAPI/internal/getapi"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	_ "testTaskAPI/docs"
+
 	_ "github.com/lib/pq"
 )
+
 // Info represents person information
 // @Description Person information with details from external APIs
 type Info struct {
 	HumanID     string    `json:"id" db:"human_id"`
-	Name        string    `json:"name" db:"name"`
-	Surname     string    `json:"surname" db:"surname"`
+	Name        string    `json:"name" db:"name" binding:"required"`
+	Surname     string    `json:"surname" db:"surname" binding:"required"`
 	Patronymic  string    `json:"patronymic" db:"patronymic"`
 	Age         int       `json:"age" db:"age"`
 	Genderize   string    `json:"gender" db:"gender"`
@@ -32,23 +37,27 @@ type Info struct {
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 
+type requestData struct{
+	Name        string    `json:"name" db:"name" binding:"required"`
+	Surname     string    `json:"surname" db:"surname" binding:"required"`
+	Patronymic  string    `json:"patronymic" db:"patronymic"`
+}
+
 // @Summary Add user
 // @Description Adds a new user to the database
 // @Tags users
 // @Accept json
 // @Produce json
-// @Param user body model.User true "User data"
-// @Success 200 {object} model.User
-// @Failure 400 {object} model.ErrorResponse
+// @Param user body requestData true "User data"
+// @Success 200 {object} Info
+// @Failure 400 {object} string "error"
 // @Router /add [post]
-
 func AddHandle(w http.ResponseWriter, r *http.Request) {
 
-	if r.Method != http.MethodPost {
-		log.Println("DEBUG: Method not allowed")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-	// 1. Получаем DB из контекста с правильным ключом
+    if !validateMethod(w, r, http.MethodPost) {
+        return
+    }
+	
 	dbVal := r.Context().Value(contextkeys.DB)
 	if dbVal == nil {
 		log.Println("DEBUG: DB connection is NIL in context")
@@ -62,39 +71,34 @@ func AddHandle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid database connection type", http.StatusInternalServerError)
 		return
 	}
-
-	// 2. Парсим запрос
-	var infoAbout Info
-	if err := json.NewDecoder(r.Body).Decode(&infoAbout); err != nil {
+	
+	var requestData requestData
+	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
 		log.Printf("DEBUG: JSON decode error: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// 3. Генерируем ID
-	infoAbout.HumanID = uuid.New().String()
+	if requestData.Name == "" || requestData.Surname == "" {
+		log.Printf("DEBUG: JSON decode error: Name and surname are required")
+    	http.Error(w, "Name and surname are required", http.StatusBadRequest)
+    	return
+	}
 
-	// 4. Получаем данные из API
-	tmpPerson, err := getAPI.GetAPI(infoAbout.Name)
+	infoAbout, err := loadData(requestData)
+
 	if err != nil {
 		log.Printf("DEBUG: API error: %v", err)
 		http.Error(w, "Failed to get additional data", http.StatusBadGateway)
-		return
+		return 
 	}
 
-	// 5. Заполняем данные
-	infoAbout.Age = tmpPerson.Age
-	infoAbout.Genderize = tmpPerson.Gender
-	infoAbout.Nationalize = tmpPerson.Country
-
-	// 6. Сохраняем в БД
 	if err := saveToDB(db, infoAbout); err != nil {
 		log.Printf("DEBUG: DB save error: %v", err)
 		http.Error(w, "Failed to save data", http.StatusInternalServerError)
 		return
 	}
 
-	// 7. Отправляем ответ
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "success",
@@ -102,6 +106,7 @@ func AddHandle(w http.ResponseWriter, r *http.Request) {
 		"data":    infoAbout,
 	}); err != nil {
 		log.Printf("DEBUG: JSON encode error: %v", err)
+		http.Error(w, "DEBUG: JSON encode error", http.StatusInternalServerError)
 	}
 }
 
@@ -113,6 +118,24 @@ func saveToDB(db *sqlx.DB, info Info) error {
 		(:human_id, :name, :surname, :patronymic, :age, :gender, :country)`
 	_, err := db.NamedExec(query, info)
 	return err
+}
+
+func loadData(requestData requestData) (Info, error){
+	info := Info{}
+	tmpPerson, err := getapi.GetAPI(requestData.Name)
+	if err != nil{
+		log.Printf("INFO: cannot load info about %s %s", requestData.Name, requestData.Surname)
+		return info, err
+	}
+	info.Name = requestData.Name
+	info.Surname = requestData.Surname
+	info.Patronymic = requestData.Patronymic
+	info.HumanID = uuid.New().String()
+	info.Age = tmpPerson.Age
+	info.Genderize = tmpPerson.Gender
+	info.Nationalize = tmpPerson.Country
+
+	return info, nil
 }
 
 // SearchHandle ищет пользователей
@@ -131,31 +154,24 @@ func saveToDB(db *sqlx.DB, info Info) error {
 // @Success 200 {object} map[string]interface{} "Результат поиска с пагинацией"
 // @Failure 500 {string} string "Внутренняя ошибка сервера"
 // @Router /search [get]
-
 func SearchHandle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if !validateMethod(w, r, http.MethodGet) {
+        return
+    }
 
-	// Получаем подключение к БД
 	db, ok := r.Context().Value(contextkeys.DB).(*sqlx.DB)
 	if !ok {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 
-	// Парсим параметры запроса
 	queryParams := r.URL.Query()
 
-	// Пагинация
 	page, limit := getPaginationParams(queryParams)
 	offset := (page - 1) * limit
 
-	// Фильтры
 	filters := getFilters(queryParams)
 
-	// Формируем SQL запрос
 	baseQuery := "SELECT human_id, name, surname, patronymic, age, gender, country, created_at FROM people WHERE 1=1"
 	countQuery := "SELECT COUNT(*) FROM people WHERE 1=1"
 
@@ -163,7 +179,6 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 	var countArgs []interface{}
 	argCounter := 1
 
-	// Добавляем фильтры
 	for key, value := range filters {
 		switch key {
 		case "name":
@@ -187,7 +202,6 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Сортировка
 	sortBy := queryParams.Get("sort_by")
 	if sortBy == "" {
 		sortBy = "created_at"
@@ -198,11 +212,10 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 	}
 	baseQuery += fmt.Sprintf(" ORDER BY %s %s", sortBy, sortOrder)
 
-	// Пагинация
+
 	baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 	args = append(args, limit, offset)
 
-	// Выполняем запрос
 	var people []Info
 	err := db.Select(&people, baseQuery, args...)
 	if err != nil {
@@ -210,7 +223,6 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем общее количество
 	var total int
 	err = db.Get(&total, countQuery, countArgs...)
 	if err != nil {
@@ -218,7 +230,6 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Формируем ответ
 	response := map[string]interface{}{
 		"data": people,
 		"pagination": map[string]interface{}{
@@ -233,7 +244,6 @@ func SearchHandle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Вспомогательные функции
 func getPaginationParams(queryParams url.Values) (page, limit int) {
 	page = 1
 	if p := queryParams.Get("page"); p != "" {
@@ -278,12 +288,10 @@ func getFilters(queryParams url.Values) map[string]string {
 // @Failure 404 {string} string "Пользователь не найден"
 // @Failure 500 {string} string "Внутренняя ошибка сервера"
 // @Router /delete/{id} [delete]
-
 func DeleteHandle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if !validateMethod(w, r, http.MethodDelete) {
+        return
+    }
 
 	idToDelete := r.URL.Path[len("/delete/"):]
 
@@ -293,14 +301,12 @@ func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем подключение к БД
 	db, ok := r.Context().Value(contextkeys.DB).(*sqlx.DB)
 	if !ok {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 
-	// 2. Выполняем SQL-запрос на удаление
 	query := `DELETE FROM people WHERE human_id = $1`
 	result, err := db.Exec(query, idToDelete)
 	if err != nil {
@@ -309,7 +315,6 @@ func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Проверяем, была ли удалена хотя бы одна запись
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		log.Printf("DEBUG: failed to check affected rows: %v\n", err)
@@ -322,8 +327,7 @@ func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Println("INFO: Success delete person")
-	// 4. Возвращаем успешный статус (204 No Content)
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusOK)
 
 }
 
@@ -340,104 +344,141 @@ func DeleteHandle(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {string} string "Пользователь не найден"
 // @Failure 500 {string} string "Внутренняя ошибка сервера"
 // @Router /update/{id} [patch]
-
 func UpdateHandle(w http.ResponseWriter, r *http.Request) {
-	// 1. Проверяем метод PATCH
-	if r.Method != http.MethodPatch {
-		log.Println("DEBUG: Method not allowed")
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if !validateMethod(w, r, http.MethodPatch) {
+        return
+    }
 
-	// 2. Извлекаем DB из контекста (аналогично AddHandle)
-	dbVal := r.Context().Value(contextkeys.DB)
-	if dbVal == nil {
-		log.Println("DEBUG: DB connection is NIL in context")
-		http.Error(w, "Database connection not established", http.StatusInternalServerError)
-		return
-	}
+    db, err := getDBFromContext(r.Context())
+    if err != nil {
+        respondWithError(w, "Database error", http.StatusInternalServerError, err)
+        return
+    }
 
-	db, ok := dbVal.(*sqlx.DB)
-	if !ok {
-		log.Printf("DEBUG: Expected *sqlx.DB, got %T", dbVal)
-		http.Error(w, "Invalid database connection type", http.StatusInternalServerError)
-		return
-	}
+    humanID := extractHumanID(r.URL.Path)
+    if humanID == "" {
+        respondWithError(w, "HumanID is required", http.StatusBadRequest, nil)
+        return
+    }
 
-	// 3. Получаем HumanID из URL (например, /humans/123)
+    updates, err := decodeAndValidateUpdates(r.Body)
+    if err != nil {
+        respondWithError(w, err.Error(), http.StatusBadRequest, err)
+        return
+    }
 
-	// Или так для стандартного http:
-	humanID := r.URL.Path[len("/delete/"):]
-	if humanID == "" {
-		http.Error(w, "HumanID is required", http.StatusBadRequest)
-		return
-	}
+    if err := updatePersonInDB(db, humanID, updates); err != nil {
+        respondWithError(w, "Update failed", http.StatusInternalServerError, err)
+        return
+    }
 
-	// 4. Парсим ТОЛЬКО переданные поля (частичное обновление)
-	var updates map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
-		log.Printf("DEBUG: JSON decode error: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+    updatedInfo, err := FetchUpdatedPerson(db, humanID)
+    if err != nil {
+        respondWithError(w, "Failed to fetch updated data", http.StatusInternalServerError, err)
+        return
+    }
 
-	// 5. Динамически генерируем SQL-запрос
-	query := "UPDATE people SET "
-	var args []interface{}
-	i := 1
+    respondWithJSON(w, http.StatusOK, map[string]interface{}{
+        "status": "success",
+        "data":   updatedInfo,
+    })
+}
 
-	// Проверяем допустимые поля для обновления
-	allowedFields := map[string]bool{
-		"name":       true,
-		"surname":    true,
-		"patronymic": true,
-		"age":        true,
-		"gender":     true,
-		"country":    true,
-	}
+func validateMethod(w http.ResponseWriter, r *http.Request, expectedMethod string) bool {
+    if r.Method != expectedMethod {
+        log.Printf("DEBUG: Method not allowed. Expected %s, got %s", expectedMethod, r.Method)
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return false
+    }
+    return true
+}
 
-	for key, val := range updates {
-		if !allowedFields[key] {
-			log.Printf("DEBUG: Invalid field: %s", key)
-			http.Error(w, fmt.Sprintf("Field '%s' cannot be updated", key), http.StatusBadRequest)
-			return
-		}
-		query += fmt.Sprintf("%s = $%d, ", key, i)
-		args = append(args, val)
-		i++
-	}
+func getDBFromContext(ctx context.Context) (*sqlx.DB, error) {
+    dbVal := ctx.Value(contextkeys.DB)
+    if dbVal == nil {
+        return nil, errors.New("DB connection is NIL in context")
+    }
+    
+    db, ok := dbVal.(*sqlx.DB)
+    if !ok {
+        return nil, fmt.Errorf("expected *sqlx.DB, got %T", dbVal)
+    }
+    return db, nil
+}
 
-	if len(args) == 0 {
-		http.Error(w, "No fields to update", http.StatusBadRequest)
-		return
-	}
+func extractHumanID(path string) string {
+    const prefix = "/delete/"
+    if len(path) <= len(prefix) {
+        return ""
+    }
+    return path[len(prefix):]
+}
 
-	// Удаляем последнюю запятую и добавляем условие WHERE
-	query = strings.TrimSuffix(query, ", ") + " WHERE human_id = $" + strconv.Itoa(i)
-	args = append(args, humanID)
+func decodeAndValidateUpdates(body io.Reader) (map[string]interface{}, error) {
+    var updates map[string]interface{}
+    if err := json.NewDecoder(body).Decode(&updates); err != nil {
+        return nil, fmt.Errorf("invalid request body: %v", err)
+    }
 
-	// 6. Выполняем запрос
-	_, err := db.Exec(query, args...)
-	if err != nil {
-		log.Printf("DEBUG: DB update error: %v", err)
-		http.Error(w, "Failed to update data", http.StatusInternalServerError)
-		return
-	}
+    allowedFields := map[string]bool{
+        "name":       true,
+        "surname":    true,
+        "patronymic": true,
+        "age":        true,
+        "gender":     true,
+        "country":    true,
+    }
 
-	// 7. Возвращаем обновленные данные (опционально)
-	updatedInfo := Info{}
-	err = db.Get(&updatedInfo, "SELECT * FROM people WHERE human_id = $1", humanID)
-	if err != nil {
-		log.Printf("DEBUG: DB fetch error: %v", err)
-		http.Error(w, "Failed to fetch updated data", http.StatusInternalServerError)
-		return
-	}
+    for key := range updates {
+        if !allowedFields[key] {
+            return nil, fmt.Errorf("field '%s' cannot be updated", key)
+        }
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "success",
-		"data":   updatedInfo,
-	}); err != nil {
-		log.Printf("DEBUG: JSON encode error: %v", err)
-	}
+    if len(updates) == 0 {
+        return nil, errors.New("no fields to update")
+    }
+
+    return updates, nil
+}
+
+func updatePersonInDB(db *sqlx.DB, humanID string, updates map[string]interface{}) error {
+    query := "UPDATE people SET "
+    var args []interface{}
+    i := 1
+
+    for key, val := range updates {
+        query += fmt.Sprintf("%s = $%d, ", key, i)
+        args = append(args, val)
+        i++
+    }
+
+    query = strings.TrimSuffix(query, ", ") + " WHERE human_id = $" + strconv.Itoa(i)
+    args = append(args, humanID)
+
+    _, err := db.Exec(query, args...)
+    return err
+}
+
+func FetchUpdatedPerson(db *sqlx.DB, humanID string) (Info, error) {
+    var person Info
+    err := db.Get(&person, "SELECT * FROM people WHERE human_id = $1", humanID)
+    return person, err
+}
+
+func respondWithError(w http.ResponseWriter, message string, statusCode int, err error) {
+    if err != nil {
+        log.Printf("DEBUG: %s: %v", message, err)
+    } else {
+        log.Printf("DEBUG: %s", message)
+    }
+    http.Error(w, message, statusCode)
+}
+
+func respondWithJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(statusCode)
+    if err := json.NewEncoder(w).Encode(data); err != nil {
+        log.Printf("DEBUG: JSON encode error: %v", err)
+    }
 }

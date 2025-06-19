@@ -1,9 +1,188 @@
-basePath: /api
+basePath: /
+definitions:
+  app.Info:
+    description: Person information with details from external APIs
+    properties:
+      age:
+        type: integer
+      country:
+        type: string
+      created_at:
+        type: string
+      gender:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      patronymic:
+        type: string
+      surname:
+        type: string
+    required:
+    - name
+    - surname
+    type: object
+  app.requestData:
+    properties:
+      name:
+        type: string
+      patronymic:
+        type: string
+      surname:
+        type: string
+    required:
+    - name
+    - surname
+    type: object
 host: localhost:8080
 info:
   contact: {}
-  description: Это тестовый API
+  description: Это тестовый API s
   title: TestTaskAPI
   version: "1.0"
-paths: {}
+paths:
+  /add:
+    post:
+      consumes:
+      - application/json
+      description: Adds a new user to the database
+      parameters:
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/app.requestData'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/app.Info'
+        "400":
+          description: error
+          schema:
+            type: string
+      summary: Add user
+      tags:
+      - users
+  /delete/{id}:
+    delete:
+      description: Удаляет пользователя по его ID
+      parameters:
+      - description: ID пользователя для удаления
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Пользователь успешно удалён
+        "400":
+          description: Неверный запрос
+          schema:
+            type: string
+        "404":
+          description: Пользователь не найден
+          schema:
+            type: string
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            type: string
+      summary: Удалить пользователя
+      tags:
+      - users
+  /search:
+    get:
+      consumes:
+      - application/json
+      description: Получение списка пользователей по заданным фильтрам
+      parameters:
+      - description: Имя пользователя для поиска
+        in: query
+        name: name
+        type: string
+      - description: Возраст пользователя для поиска
+        in: query
+        name: age
+        type: integer
+      - description: Страна пользователя для поиска
+        in: query
+        name: country
+        type: string
+      - description: Номер страницы
+        in: query
+        name: page
+        type: integer
+      - description: Количество записей на страницу
+        in: query
+        name: limit
+        type: integer
+      - description: Поле для сортировки (например, created_at)
+        in: query
+        name: sort_by
+        type: string
+      - description: Порядок сортировки (ASC или DESC)
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Результат поиска с пагинацией
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            type: string
+      summary: Поиск пользователей
+      tags:
+      - users
+  /update/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: Частичное обновление данных пользователя по ID
+      parameters:
+      - description: ID пользователя для обновления
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Данные для обновления
+        in: body
+        name: input
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Успешный ответ с обновлёнными данными
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Ошибка в запросе
+          schema:
+            type: string
+        "404":
+          description: Пользователь не найден
+          schema:
+            type: string
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            type: string
+      summary: Обновить пользователя
+      tags:
+      - users
 swagger: "2.0"

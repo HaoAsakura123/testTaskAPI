@@ -1,4 +1,4 @@
-package getAPI
+package getapi
 
 import (
 	"encoding/json"
@@ -53,7 +53,6 @@ func GetAPI(name string) (ResponsePersonInfo, error) {
         
         information = mergeInformation(information, partialInfo)
     }
-	//fmt.Println(information.Country)
     if information.Age == 0 && information.Gender == "" && information.Country == nil {
         return ResponsePersonInfo{}, fmt.Errorf("no data received from APIs")
     }
@@ -64,7 +63,6 @@ func GetAPI(name string) (ResponsePersonInfo, error) {
 	}
 	response := &ResponsePersonInfo{Age: information.Age, Gender: information.Gender, Country: contryStr}
 	
-	// нужно придумать как у интерфейса определить тип и вычленить информацию
     return *response, nil
 }
 
